@@ -1,0 +1,327 @@
+/////////////////////////////////////////////////////////////Design BLOCK
+module dff(
+  input clk, rst,din,
+  output reg dout,
+);
+  always @(posedge clk)begin
+    if(rst)
+      dout <=0;
+    else
+      dout <= din;
+  end
+endmodule
+
+interface dff_if;
+  logic clk;
+  logic rst;
+  logic din;
+  logic dout;
+endinterface
+
+/////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+//////////////////////  VERIFICATION ENV  ////////////////////////////////////////
+
+`include"uvm_macros.svh"
+import uvm_pkg::*;
+
+class transaction extends uvm_sequence_item;
+  `uvm_object_utils(transaction)
+  
+  rand bit rst;
+  rand bit din;
+  bit dout;
+  
+  function new(string path = "transaction");
+    super.new(path);
+  endfunction
+endclass
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class config_dff extends uvm_object;
+  `uvm_object_utils(config_dff)
+  
+  uvm_active_passive_enum agent_type = UVM_ACTIVE;
+  
+  function new(string path = "config_dff");
+    super.new(path);
+  endfunction
+  
+endclass
+////////////////////////////////////////////////////////////////////////////////////////////////
+
+class valid_din extends uvm_sequence#(transaction);
+  `uvm_object_utils(valid_din)
+  
+  transaction tr;
+  
+  function new(string path = "valid_din");
+    super.new(path);
+  endfunction
+  
+  virtual task body();
+    repeat(15)begin
+      tr = transaction::type_id::create("tr");
+      start_item(tr);
+      assert(tr.randomize());
+      tr.rst=0;
+      `uvm_info("SEQ", $sformatf("rst : %0b  din : %0b  dout : %0b", tr.rst, tr.din, tr.dout), UVM_NONE);
+      finish_item(tr);
+    end
+  endtask
+endclass
+//////////////////////////////////////////////////////////////////////////////////////
+
+class rst_dff extends uvm_sequence#(transaction);
+  `uvm_object_utils(rst_dff)
+  
+  transaction tr;
+  function new(string path = "rst_dff");
+    super.new(path);
+  endfunction
+  
+  virtual task body();
+    repeat(15)begin
+      tr= transaction::type_id::create("tr");
+      start_item(tr);
+      assert(tr.randomize());
+      tr.rst = 1;
+      `uvm_info("SEQ", $sformatf("rst : %0b  din : %0b  dout : %0b", tr.rst, tr.din, tr.dout), UVM_NONE);
+      finish_item(tr);
+    end
+  endtask
+endclass
+/////////////////////////////////////////////////////////////////////////////////////////
+
+class valid_din_rst extends uvm_sequence#(transaction);
+  `uvm_object_utils(valid_din_rst)
+  
+  transaction tr;
+  
+  function new(string path = "valid_din_rst");
+    super.new(path);
+  endfunction
+  
+  virtual task body();
+    repeat(15)begin
+      tr= transaction::type_id::create("tr");
+      start_item(tr);
+      assert(tr.randomize());
+      `uvm_info("SEQ", $sformatf("rst : %0b  din : %0b  dout : %0b", tr.rst, tr.din, tr.dout), UVM_NONE);
+      finish_item(tr);
+    end
+  endtask
+endclass
+/////////////////////////////////////////////////////////////////////////////////////////
+
+class driver extends uvm_driver#(transaction);
+  `uvm_component_utils(driver)
+  
+  transaction tr;
+  virtual dff_if dif;
+  
+  function new(string path = "driver", uvm_component parent = null);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    tr = transaction::type_id::create("tr");
+    if(!uvm_config_db#(virtual dff_if)::get(this,"","dif",dif))
+      `uvm_error("DRV","unable to access uvm_config_db");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      seq_item_port.get_next_item(tr);
+      dif.rst <= tr.rst;
+      dif.din <= tr.din;
+      `uvm_info("DRV",$sformatf("the value rst:%b din:%b dout:%b",tr.rst,tr.din,tr.dout),UVM_NONE);
+      seq_item_port.item_done();
+      repeat(2)@(posedge dif.clk);
+    end
+  endtask
+endclass
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class monitor extends uvm_monitor;
+  `uvm_component_utils(monitor)
+  
+  transaction tr;
+  virtual dff_if dif;
+  uvm_analysis_port#(transaction) send;
+  
+  function new(string path = "monitor",uvm_component parent = null);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    tr = transaction::type_id::create("tr");
+    send = new("send",this);
+    if(!uvm_config_db#(virtual dff_if)::get(this,"","dif",dif))
+      `uvm_error("MON","UNABLE TO ACCESS");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      repeat (2)@(posedge dif.clk);
+      tr.rst = dif.rst;
+      tr.din = dif.din;
+      tr.dout = dif.dout;
+      `uvm_info("MON",$sformatf("the rcvd value rst:%b din:%b  dout:%b",tr.rst,tr.din,tr.dout),UVM_NONE);
+      send.write(tr);
+    end
+  endtask
+endclass
+////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class sco extends uvm_scoreboard;
+  `uvm_component_utils(sco);
+  
+  uvm_analysis_imp#(transaction,sco) recv;
+  
+  function new(string path = "sco",uvm_component parent = null);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase (uvm_phase phase);
+    super.build_phase(phase);
+    recv = new("recv",this);
+  endfunction
+  
+  virtual function void write(transaction tr);
+    `uvm_info("SCO",$sformatf("the vlaue rst:%b  din:%b  dout:%b ",tr.rst,tr.din,tr.dout),UVM_NONE);
+    if(tr.rst == 1'b1)
+      `uvm_info("SCO","DFF RESET",UVM_NONE)
+    else if(tr.rst == 1'b0 && tr.din == tr.dout)
+      `uvm_info("SCO","TEST PASSED",UVM_NONE)
+      else
+        `uvm_info("SCO","TEST FAILED",UVM_NONE)
+        $display("-------------------------------------------------------------------------");
+  endfunction
+endclass
+////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class agent extends uvm_agent;
+  `uvm_component_utils(agent)
+  
+  monitor m;
+  driver d;
+  uvm_sequencer#(transaction) seqr;
+  
+  config_dff cfg;
+  
+  function new(string path = "agent",uvm_component parent = null);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    m = monitor::type_id::create("m",this);
+    cfg = config_dff::type_id::create("cfg",this);
+    
+    if(!uvm_config_db#(config_dff)::get(this,"","cfg",cfg))
+      `uvm_error("AGENT","UNABLE TO ACCESS");
+    
+    if(cfg.agent_type == UVM_ACTIVE)
+      begin
+        d = driver::type_id::create("d",this);
+        seqr = uvm_sequencer#(transaction)::type_id::create("seqr",this);
+      end
+  endfunction
+  
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    d.seq_item_port.connect(seqr.seq_item_export);
+  endfunction
+endclass
+//////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class env extends uvm_env;
+  `uvm_component_utils(env);
+  
+  sco s;
+  agent a;
+  config_dff cfg;
+  
+  function new(string path = "env",uvm_component parent = null);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase (uvm_phase phase);
+    super.build_phase(phase);
+    s = sco::type_id::create("s",this);
+    a = agent::type_id::create("a",this);
+    cfg= config_dff::type_id::create("cfg",this);
+    
+    uvm_config_db#(config_dff)::set(this,"a","cfg",cfg);
+  endfunction
+  
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    a.m.send.connect(s.recv);
+  endfunction
+  
+endclass
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+class test extends uvm_test;
+  `uvm_component_utils(test)
+  
+  env e;
+  valid_din vd;
+  rst_dff rd;
+  valid_din_rst vdr;
+  
+  
+  function new(string path = "test", uvm_component parent = null);
+    super.new(path,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    e = env::type_id::create("e",this);
+    vd = valid_din::type_id::create("vd",this);
+    rd = rst_dff::type_id::create("rd",this);
+    vdr = valid_din_rst::type_id::create("vdr",this);
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    phase.raise_objection(this);
+    rd.start(e.a.seqr);
+    #40;
+    vd.start(e.a.seqr);
+    #40;
+    vdr.start(e.a.seqr);
+    #40;
+    phase.drop_objection(this);
+  endtask
+endclass
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+module dff_tb;
+  dff_if dif();
+  
+  dff dut(.rst(dif.rst),.din(dif.din),.clk(dif.clk),.dout(dif.dout));
+  initial dif.clk = 0;
+  
+  always #10 dif.clk = ~dif.clk;
+  
+  initial begin
+    uvm_config_db#( virtual dff_if)::set(null,"*","dif",dif);
+    run_test("test");
+  end
+  
+  initial begin
+    
+    $dumpvars();
+    $dumpfile("dump.vcd");
+  end
+endmodule
+      
+        
